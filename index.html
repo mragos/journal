@@ -3808,6 +3808,14 @@
         .floating-controls, body.wide-layout #side-right > .floating-controls, body.wide-layout #slot-backup .floating-controls {
             box-shadow: none !important; filter: none !important; -webkit-backdrop-filter: none; backdrop-filter: none;
         }
+
+        /* ---- Mobil: Ek Analizler / Simülasyonlar sekmeleri içeriğin altında; haber tablosu etiketleri ---- */
+        @media (max-width: 768px) {
+            .simx-root > .simx-tabs:not(.calc-sel) { order: 99; margin-top: 6px; width: 100%; justify-content: center; }
+            .simx-root > .simx-tabs:not(.calc-sel) .simx-tab { flex: 1 1 auto; text-align: center; }
+            .news-tbl td.lbl { white-space: normal; line-height: 1.25; min-width: 64px; }
+            .news-tbl td.lbl, .news-tbl th.lbl { padding-left: 6px; padding-right: 6px; }
+        }
 </style>
 </head>
 <body>
@@ -3956,8 +3964,8 @@
         </div>
 
         <div class="view-mode-group">
-            <button class="mode-btn active" id="btn-mode-day" onclick="setViewMode('day')">Gün</button>
-            <button class="mode-btn" id="btn-mode-week" onclick="setViewMode('week')">Hafta</button>
+            <button class="mode-btn" id="btn-mode-day" onclick="setViewMode('day')">Gün</button>
+            <button class="mode-btn active" id="btn-mode-week" onclick="setViewMode('week')">Hafta</button>
             <button class="mode-btn" id="btn-mode-month" onclick="setViewMode('month')">Ay</button>
         </div>
     </div>
@@ -4273,7 +4281,8 @@
 
         let currentYear = 2026;
         let currentMonth = 0;
-        let viewMode = 'day';
+        let viewMode = 'week';
+        (function () { const t = new Date(); if (t.getFullYear() >= 2025 && t.getFullYear() <= 2027) { currentYear = t.getFullYear(); currentMonth = t.getMonth(); } })();
         let selectedDateStr = "";
 
         let chartDataPoints = [];
@@ -4402,7 +4411,12 @@
             }
         }
 
-        function setViewMode(mode) {
+        function setViewMode(mode, keepPeriod) {
+            // Güne geçince bugünün ayına dön (ay kartından gelen tıklamada seçilen ay korunur)
+            if (mode === 'day' && viewMode !== 'day' && !keepPeriod) {
+                const t = new Date();
+                if (t.getFullYear() >= 2025 && t.getFullYear() <= 2027) { currentYear = t.getFullYear(); currentMonth = t.getMonth(); }
+            }
             viewMode = mode;
             document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
             document.getElementById(`btn-mode-${mode}`).classList.add('active');
@@ -5010,7 +5024,7 @@
 
                 const mCls = monthTrades > 0 ? (monthR > 0 ? 'cell-profit' : (monthR < 0 ? 'cell-loss' : 'cell-be')) : '';
                 monthCardsHtml += `
-                    <div class="period-card ${mCls}${monthTrades === 0 ? ' is-empty' : ''}" onclick="currentMonth = ${m}; setViewMode('day');" style="cursor:pointer;--int:${intOf(monthR, 20)};" title="Bu aya git">
+                    <div class="period-card ${mCls}${monthTrades === 0 ? ' is-empty' : ''}" onclick="currentMonth = ${m}; setViewMode('day', true);" style="cursor:pointer;--int:${intOf(monthR, 20)};" title="Bu aya git">
                         <div class="period-card-header">
                             <span>${monthNames[m]} ${currentYear}</span>
                             <span>İncele ❯</span>
@@ -5589,14 +5603,15 @@
 
                     let monthR = 0;
                     let monthTrades = 0;
+                    let wickLo = 0, wickHi = 0;   // ay içi seyrin en düşük / en yüksek seviyesi (ay başı = 0)
 
-                    Object.keys(db).forEach(dateStr => {
-                        if (dateStr >= monthStart && dateStr <= monthEnd) {
-                            db[dateStr].forEach(t => {
-                                monthR += t.r;
-                                monthTrades++;
-                            });
-                        }
+                    Object.keys(db).filter(dateStr => dateStr >= monthStart && dateStr <= monthEnd).sort().forEach(dateStr => {
+                        db[dateStr].forEach(t => {
+                            monthR += t.r;
+                            monthTrades++;
+                            if (monthR < wickLo) wickLo = monthR;
+                            if (monthR > wickHi) wickHi = monthR;
+                        });
                     });
 
                     cumR += monthR;
@@ -5614,6 +5629,8 @@
                         subLabel: `${currentYear}`,
                         r: monthR,
                         cumR: cumR,
+                        wickLo: wickLo,
+                        wickHi: wickHi,
                         trades: monthTrades
                     });
                 }
@@ -5645,6 +5662,16 @@
         }
 
         // 1. Çizgi Grafik (10'ar artan soldaki sayılar & daha büyük yazılar)
+        // Mobilde hafta/ay etiketleri üst üste binmesin: aylar baş harfiyle, haftalar 1-5-10-15... şeklinde
+        function periodTickLabel(p, i, kind) {
+            const mob = window.innerWidth <= 768;
+            if (periodType === 'day') return p.tick || null;
+            if (periodType === 'month') return mob ? String(p.label).charAt(0).toLocaleUpperCase('tr') : p.label;
+            if (mob) { const n = i + 1; return (n === 1 || n % 5 === 0) ? String(n) : null; }
+            if (i % 4 !== 0) return null;
+            return kind === 'bar' ? `H${i + 1}` : p.label;
+        }
+
         function renderPeriodLineChart(lastActiveIndex) {
             const canvas = document.getElementById('periodLineChart');
             if (!canvas) return;
@@ -5738,12 +5765,12 @@
                     ctx.fill();
                 }
 
-                const showTick = periodType === 'day' ? !!p.tick : (periodType === 'month' || (i % 4 === 0));
-                if (showTick) {
+                const tickLbl = periodTickLabel(p, i, 'line');
+                if (tickLbl) {
                     ctx.fillStyle = TC.text;
                     ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Inter\", \"Segoe UI\", sans-serif';
                     ctx.textAlign = 'center';
-                    ctx.fillText(periodType === 'day' ? p.tick : p.label, getX(i), height - 12);
+                    ctx.fillText(tickLbl, getX(i), height - 12);
                 }
             }
 
@@ -5839,6 +5866,7 @@
             periodChartData.forEach(p => {
                 if (p.r < minVal) minVal = p.r;
                 if (p.r > maxVal) maxVal = p.r;
+                if (p.wickLo !== undefined) { if (p.wickLo < minVal) minVal = p.wickLo; if (p.wickHi > maxVal) maxVal = p.wickHi; }
             });
 
             let step = niceStep(Math.max(maxVal - minVal, 2 * unitK()) / 6);
@@ -5892,6 +5920,17 @@
                 const y = getY(p.r);
                 const barH = Math.abs(y - zeroY);
 
+                if (p.wickLo !== undefined && p.trades > 0) {
+                    ctx.strokeStyle = p.r >= 0 ? TC.green : TC.red;
+                    ctx.lineWidth = 2;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(getX(i), getY(p.wickHi));
+                    ctx.lineTo(getX(i), getY(p.wickLo));
+                    ctx.stroke();
+                    ctx.lineCap = 'butt';
+                }
+
                 if (p.r >= 0) {
                     ctx.fillStyle = TC.green;
                     ctx.fillRect(x, y, barWidth, barH);
@@ -5900,12 +5939,12 @@
                     ctx.fillRect(x, zeroY, barWidth, barH);
                 }
 
-                const showBarTick = periodType === 'day' ? !!p.tick : (periodType === 'month' || (i % 4 === 0));
-                if (showBarTick) {
+                const barTickLbl = periodTickLabel(p, i, 'bar');
+                if (barTickLbl) {
                     ctx.fillStyle = TC.text;
                     ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Inter\", \"Segoe UI\", sans-serif';
                     ctx.textAlign = 'center';
-                    ctx.fillText(periodType === 'day' ? p.tick : (periodType === 'month' ? p.label : `H${i+1}`), getX(i), height - 12);
+                    ctx.fillText(barTickLbl, getX(i), height - 12);
                 }
             }
 
@@ -5941,7 +5980,8 @@
                 ctx.setLineDash([]);
 
                 const ttW = 160;
-                const ttH = 60;
+                const hasWick = pt.wickLo !== undefined && pt.trades > 0;
+                const ttH = hasWick ? 96 : 60;
                 let ttX = ptX + 10;
                 if (ttX + ttW > width - padding.right) ttX = ptX - ttW - 10;
                 let ttY = mousePeriodBarPos.y - 20;
@@ -5960,6 +6000,11 @@
                 ctx.fillStyle = pt.r >= 0 ? TC.greenText : TC.redText;
                 ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Inter\", \"Segoe UI\", sans-serif';
                 ctx.fillText(`${lblMode('Net R', 'Net')}: ${fmtD(pt.r)}`, ttX + 10, ttY + 42);
+                if (hasWick) {
+                    ctx.fillStyle = TC.text;
+                    ctx.fillText(`${lblMode('En yüksek R', 'En yüksek')}: ${fmtD(pt.wickHi)}`, ttX + 10, ttY + 60);
+                    ctx.fillText(`${lblMode('En düşük R', 'En düşük')}: ${fmtD(pt.wickLo)}`, ttX + 10, ttY + 78);
+                }
             }
         }
 
@@ -9358,13 +9403,13 @@
                 return { sel, arr, st, n: arr.length, units, total: Math.max(total, units), avg: units ? st.sum / units : null, posPct: units ? pos / units * 100 : null };
             };
             const dayRows = [
-                ['NFP öncesi gün', d => sets.NFPpre.has(d)], ['NFP günü', d => sets.NFPday.has(d)], ['NFP sonrası gün', d => sets.NFPpost.has(d)],
-                ['CPI öncesi gün', d => sets.CPIpre.has(d)], ['CPI günü', d => sets.CPIday.has(d)], ['CPI sonrası gün', d => sets.CPIpost.has(d)],
-                ['FOMC öncesi gün', d => sets.FOMCpre.has(d)], ['FOMC günü', d => sets.FOMCday.has(d)], ['FOMC sonrası gün', d => sets.FOMCpost.has(d)],
+                ['NFP<br>öncesi gün', d => sets.NFPpre.has(d)], ['NFP<br>günü', d => sets.NFPday.has(d)], ['NFP<br>sonrası gün', d => sets.NFPpost.has(d)],
+                ['CPI<br>öncesi gün', d => sets.CPIpre.has(d)], ['CPI<br>günü', d => sets.CPIday.has(d)], ['CPI<br>sonrası gün', d => sets.CPIpost.has(d)],
+                ['FOMC<br>öncesi gün', d => sets.FOMCpre.has(d)], ['FOMC<br>günü', d => sets.FOMCday.has(d)], ['FOMC<br>sonrası gün', d => sets.FOMCpost.has(d)],
                 ['Haber olmayan günler', d => !dayUnion.has(d), true]
             ].map(([label, fn, ref]) => Object.assign({ label, ref: !!ref }, analyse(T, t => t.date, fn, bizDays)));
             const wkRows = [
-                ['NFP haftası', k => sets.NFPwk.has(k)], ['CPI haftası', k => sets.CPIwk.has(k)], ['FOMC haftası', k => sets.FOMCwk.has(k)], ['NFP / CPI / FOMC haftalarından herhangi biri', k => wkUnion.has(k)],
+                ['NFP haftası', k => sets.NFPwk.has(k)], ['CPI haftası', k => sets.CPIwk.has(k)], ['FOMC haftası', k => sets.FOMCwk.has(k)], ['NFP / CPI / FOMC<br>haftalarından herhangi biri', k => wkUnion.has(k)],
                 ['Haber olmayan haftalar', k => !wkUnion.has(k), true]
             ].map(([label, fn, ref]) => Object.assign({ label, ref: !!ref }, analyse(Tw, t => mondayOf(t.date), fn, wkList)));
             const info = (a, b, low) => `<td><div class="hm-cell ${low ? 'low' : ''}" style="background:var(--surface-2);"><div class="hm-net">${a}</div>${b ? `<div class="hm-line">${b}</div>` : ''}</div></td>`;
@@ -9373,7 +9418,7 @@
                 const resCell = (r, i) => {
                     const h = sxCell(r.arr);
                     if (!r.n) return h;
-                    hmCells[pfx + i] = { title: r.label, trades: r.sel };
+                    hmCells[pfx + i] = { title: r.label.replace(/<br>/g, ' '), trades: r.sel };
                     return h.replace('class="hm-cell ', `onclick="hmOpen('${pfx + i}')" title="İşlem listesini aç" class="hm-cell clickable `);
                 };
                 const base = rows[rows.length - 1];
@@ -9389,7 +9434,7 @@
                     }
                     return `<tr><td class="lbl">${r.label}</td>${info(`${r.units} / ${r.total}`, r.units ? `${r.n} işlem` : '', low)}${resCell(r, ri)}${r.units ? info(fmtR(r.avg), '', low) : info('—')}${r.units ? info(sxPctTxt(r.posPct), '', low) : info('—')}${diff}</tr>`;
                 }).join('');
-                return `<table class="hm-table">${head}<tbody>${body}</tbody></table>`;
+                return `<table class="hm-table news-tbl">${head}<tbody>${body}</tbody></table>`;
             };
             return `<div class="rg-chart"><div class="an-section-title">Günlere göre <small style="font-weight:500;color:var(--text-muted);">(haber günü, önceki ve sonraki işlem günü)</small></div><div class="an-table-wrap">${tbl(dayRows, 'gün', 'Gün', 'newsd')}</div></div>
                 <div class="rg-chart"><div class="an-section-title">Haftaya göre <small style="font-weight:500;color:var(--text-muted);">(haberin olduğu pazartesi–cuma haftası)</small></div><div class="an-table-wrap">${tbl(wkRows, 'hafta', 'Hafta', 'newsw')}</div></div>
